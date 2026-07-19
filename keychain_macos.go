@@ -72,7 +72,32 @@ func init() {
 	})
 }
 
+// ensureUnlocked triggers Touch ID authentication and keychain unlock when
+// biometrics are enabled. It is safe to call before any keychain operation —
+// it returns immediately (no-op) when:
+//   - no custom keychain path is configured
+//   - biometrics are not enabled
+//   - Touch ID has already succeeded in this process
+//   - the keychain file does not exist yet
+func (k *keychain) ensureUnlocked() error {
+	if k.path == "" || !k.useTouchID || k.isTouchIDAuthenticated {
+		return nil
+	}
+	kc := gokeychain.NewWithPath(k.path)
+	if err := kc.Status(); err != nil {
+		// Keychain doesn't exist or is unavailable — nothing to unlock.
+		// Don't try to create it here; creation belongs to the Set path.
+		return nil
+	}
+	_, err := k.openWithTouchID()
+	return err
+}
+
 func (k *keychain) Get(key string) (Item, error) {
+	if err := k.ensureUnlocked(); err != nil {
+		return Item{}, err
+	}
+
 	query := gokeychain.NewItem()
 	query.SetSecClass(gokeychain.SecClassGenericPassword)
 	query.SetService(k.service)
@@ -110,6 +135,10 @@ func (k *keychain) Get(key string) (Item, error) {
 }
 
 func (k *keychain) GetMetadata(key string) (Metadata, error) {
+	if err := k.ensureUnlocked(); err != nil {
+		return Metadata{}, err
+	}
+
 	query := gokeychain.NewItem()
 	query.SetSecClass(gokeychain.SecClassGenericPassword)
 	query.SetService(k.service)
@@ -238,6 +267,10 @@ func (k *keychain) Set(item Item) error {
 }
 
 func (k *keychain) Remove(key string) error {
+	if err := k.ensureUnlocked(); err != nil {
+		return err
+	}
+
 	item := gokeychain.NewItem()
 	item.SetSecClass(gokeychain.SecClassGenericPassword)
 	item.SetService(k.service)
@@ -266,6 +299,10 @@ func (k *keychain) Remove(key string) error {
 }
 
 func (k *keychain) Keys() ([]string, error) {
+	if err := k.ensureUnlocked(); err != nil {
+		return nil, err
+	}
+
 	query := gokeychain.NewItem()
 	query.SetSecClass(gokeychain.SecClassGenericPassword)
 	query.SetService(k.service)
